@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tunnel Ventilation Manager</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f1f1f1;
+      padding: 0.5rem;
+      margin: 0;
+      font-size: 14px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.3rem;
+      margin: 0.5rem 0;
+    }
+    #stations {
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 0 1rem;
+      box-sizing: border-box;
+    }
+    .station {
+      border: 1px solid #555;
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      margin: 0.5rem 0;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      transition: background-color 0.3s ease;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .station-header {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.4rem;
+    }
+    .station-name {
+      font-weight: 700;
+      font-size: 1.1rem;
+      white-space: nowrap;
+    }
+    .station-temp {
+      font-weight: 400;
+      font-size: 1rem;
+      color: #222;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .cool-bg {
+      background-color: #90caf9;
+    }
+    .warm-bg {
+      background-color: #fbc02d;
+    }
+    .hot-bg {
+      background-color: #e53935;
+      color: white;
+    }
+    .repair {
+      color: red;
+      font-weight: bold;
+      margin-top: 0.2rem;
+      user-select: none;
+    }
+    button {
+      margin: 0.25rem 0 0.25rem 0.2rem;
+      padding: 0.3rem 0.8rem;
+      font-size: 0.95rem;
+      cursor: pointer;
+      border-radius: 4px;
+      border: 1.5px solid #555;
+      background: #eee;
+      transition: background 0.3s, color 0.3s;
+      user-select: none;
+    }
+    button:hover:not(:disabled) {
+      background: #ddd;
+    }
+    button.selected {
+      background: #2196f3;
+      color: white;
+      border-color: #1976d2;
+      font-weight: bold;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      border-color: #999;
+      color: #666;
+    }
+    canvas {
+      display: block;
+      margin: 1rem auto;
+      background: #fff;
+      border: 1px solid #333;
+      max-width: 100%;
+      height: auto;
+    }
+    .status-bar {
+      text-align: center;
+      font-weight: bold;
+      margin: 0.5rem 0 1rem 0;
+      font-size: 0.9rem;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 0 1rem;
+      box-sizing: border-box;
+    }
+    ul {
+      margin: 0.2rem 0 0 1.1rem;
+      padding: 0;
+      font-size: 0.75rem;
+      list-style-type: disc;
+    }
+    p, li {
+      margin: 0;
+      line-height: 1.2em;
+    }
+    .fan-buttons {
+      margin-top: 0.3rem;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    /* Center Next Turn button and limit width */
+    div[style*="text-align:center"] {
+      max-width: 600px;
+      margin: 0 auto 1rem auto;
+      padding: 0 1rem;
+      box-sizing: border-box;
+    }
+    #gameOverOverlay {
+      position: fixed;
+      top:0; left:0; right:0; bottom:0;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      font-size: 1.2rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      display: none;
+    }
+    #gameOverOverlay button {
+      margin-top: 1rem;
+      font-size: 1rem;
+      padding: 0.5rem 1rem;
+    }
+    #summerWarning {
+      text-align: center;
+      font-weight: bold;
+      color: #e65100;
+      margin-bottom: 1rem;
+      font-size: 1.1rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Tunnel Ventilation Manager</h1>
+<p style="text-align:center; font-size: 0.9rem; margin-top: 0;">Keep stations cool and avoid blowing your budget!</p>
+
+<div class="status-bar">
+  <span id="turn">Turn: 0</span> |
+  <span id="budget">Budget: £1000</span> |
+  <span id="maintenance">Next Maintenance In: 5 turns</span>
+</div>
+
+<div id="summerWarning">⚠️ Summer Time! Temperature rises faster! ⚠️</div>
+
+<div id="stations"></div>
+
+<div style="text-align:center">
+  <button onclick="nextTurn()" id="nextTurnBtn">Next Turn</button>
+</div>
+
+<canvas id="graph" width="600" height="300"></canvas>
+<canvas id="costGraph" width="600" height="200"></canvas>
+
+<div id="gameOverOverlay">
+  <div id="gameOverMessage"></div>
+  <button onclick="restartGame()">Restart Game</button>
+  <button onclick="closeGameOver()">Close</button>
+</div>
+
+
+<script>
+const STATIONS = [
+  { name: "Oxford Circus", temp: 27, fanType: 0, history: [], underRepair: false, costHistory: [] },
+  { name: "Green Park", temp: 28, fanType: 0, history: [], underRepair: false, costHistory: [] },
+  { name: "Bank", temp: 30, fanType: 0, history: [], underRepair: false, costHistory: [] }
+];
+
+let budget = 1000;
+let turn = 0;
+const MAX_TURNS = 52;
+
+const FAN_TYPES = [
+  { name: "Off", cooling: 0, cost: 0 },
+  { name: "Standard", cooling: 3, cost: 50 },
+  { name: "High Power", cooling: 5, cost: 90 }
+];
+
+const MAINTENANCE_COST = 20;
+const REPAIR_COST = 60;
+const PENALTY_COST = 50;
+const PENALTY_TEMP_THRESHOLD = 22;
+const MAX_TEMP = 35;
+const REWARD_TEMP_THRESHOLD = 30;
+const REWARD_AMOUNT = 150;
+
+const REPAIR_MESSAGES = [
+  "Fan belt snapped!",
+  "Control system glitch!",
+  "Power surge!",
+  "Motor bearing failure!",
+  "Airflow blockage detected!"
+];
+
+function HEAT_INCREASE() {
+  return Math.random() * 2 + 1;
+}
+function SUMMER_HEAT_INCREASE() {
+  return Math.random() + 2; // between 2 and 3
+}
+
+function render() {
+  const container = document.getElementById('stations');
+  document.getElementById('budget').innerText = `Budget: £${budget.toFixed(2)}`;
+  document.getElementById('turn').innerText = `Turn: ${turn}`;
+  const turnsUntilMaintenance = 5 - (turn % 5 || 5);
+  document.getElementById('maintenance').innerText = `Next Maintenance In: ${turnsUntilMaintenance} turn${turnsUntilMaintenance === 1 ? '' : 's'}`;
+  
+  // Show summer warning if turn > 35
+  document.getElementById('summerWarning').style.display = turn > 35 ? 'block' : 'none';
+
+  container.innerHTML = '';
+
+  STATIONS.forEach((s, i) => {
+    let bgClass = '';
+    if (s.temp < 28) bgClass = 'cool-bg';
+    else if (s.temp < 32) bgClass = 'warm-bg';
+    else bgClass = 'hot-bg';
+
+    const fanCost = FAN_TYPES[s.fanType].cost;
+    const isMaintenanceTurn = turn % 5 === 0 && turn !== 0;
+    const repairCost = s.underRepair ? REPAIR_COST : 0;
+    const maintenanceCost = isMaintenanceTurn ? MAINTENANCE_COST : 0;
+    const totalCost = fanCost + maintenanceCost + repairCost;
+
+    const div = document.createElement('div');
+    div.className = `station ${bgClass}`;
+    div.innerHTML = `
+      <div class="station-header">
+        <div class="station-name">${s.name}</div>
+        <div class="station-temp">${s.temp.toFixed(1)}°C</div>
+      </div>
+      <p style="margin-top:0; margin-bottom:0.3rem;">
+        Fan: ${FAN_TYPES[s.fanType].name} ${s.underRepair ? '<span class="repair">(Under Repair)</span>' : ''}
+      </p>
+      <p style="font-size:0.75rem; font-weight:bold; margin:0.15rem 0 0.15rem 0;">
+        Cost This Turn: £${totalCost.toFixed(2)}
+      </p>
+      <ul>
+        <li>Fan: £${fanCost}</li>
+        <li>Maintenance: £${maintenanceCost}</li>
+        <li>Repair: £${repairCost}</li>
+      </ul>
+      <div class="fan-buttons">
+        ${FAN_TYPES.map((fan, idx) => `
+          <button
+            onclick="setFan(${i}, ${idx})"
+            class="${s.fanType === idx ? 'selected' : ''}"
+            ${s.underRepair ? 'disabled' : ''}
+            aria-label="Set fan to ${fan.name} for ${s.name}"
+            type="button"
+          >${fan.name}</button>
+        `).join('')}
+      </div>
+    `;
+    container.appendChild(div);
+  });
+
+  drawGraph();
+  drawCostGraph();
+}
+
+function setFan(stationIndex, fanIndex) {
+  if (!STATIONS[stationIndex].underRepair) {
+    STATIONS[stationIndex].fanType = fanIndex;
+    render();
+  }
+}
+
+function closeGameOver() {
+  document.getElementById('gameOverOverlay').style.display = 'none';
+  document.getElementById('nextTurnBtn').disabled = false;
+}
+
+function gameOver(message) {
+  // Disable next turn button
+  document.getElementById('nextTurnBtn').disabled = true;
+  // Show overlay with message and option to restart
+  const overlay = document.getElementById('gameOverOverlay');
+  const msgDiv = document.getElementById('gameOverMessage');
+  msgDiv.innerText = message;
+  overlay.style.display = 'flex';
+}
+
+function restartGame() {
+  // Reset game state
+  budget = 1000;
+  turn = 0;
+  STATIONS.forEach(s => {
+    s.temp = 27 + Math.random() * 3; // reset temps 27-30
+    s.fanType = 0;
+    s.history = [];
+    s.underRepair = false;
+    s.costHistory = [];
+  });
+  document.getElementById('gameOverOverlay').style.display = 'none';
+  document.getElementById('nextTurnBtn').disabled = false;
+  render();
+}
+
+function nextTurn() {
+  if (turn >= MAX_TURNS) return; // game already ended
+
+  turn++;
+
+  STATIONS.forEach(station => {
+    // Increase temperature by heat amount depending on summer or not
+    let heatGain = turn > 35 ? SUMMER_HEAT_INCREASE() : HEAT_INCREASE();
+    station.temp += heatGain;
+
+    // Cooling if fan active and not under repair
+    const fan = FAN_TYPES[station.fanType];
+    if (!station.underRepair) {
+      station.temp -= fan.cooling;
+      // Chance of repair triggered (4%)
+      if (Math.random() < 0.04) {
+        station.underRepair = true;
+        alert(`${station.name}: ${REPAIR_MESSAGES[Math.floor(Math.random() * REPAIR_MESSAGES.length)]} Repair cost £${REPAIR_COST}`);
+      }
+    } else {
+      // Repair happens this turn, next turn fan will be active again
+      station.underRepair = false;
+    }
+
+    // Temperature floor at 20°C
+    if (station.temp < 20) station.temp = 20;
+
+    // Penalty if temp < 22
+    if (station.temp < PENALTY_TEMP_THRESHOLD) {
+      alert(`${station.name}: Temperature below ${PENALTY_TEMP_THRESHOLD}°C! £${PENALTY_COST} penalty applied.`);
+      budget -= PENALTY_COST;
+    }
+
+    // Deduct costs for fan, maintenance, repairs
+    let costFan = fan.cost;
+    let costMaintenance = (turn % 5 === 0 && turn !== 0) ? MAINTENANCE_COST : 0;
+    let costRepair = station.underRepair ? REPAIR_COST : 0;
+
+    let totalCost = costFan + costMaintenance + costRepair;
+    budget -= totalCost;
+
+    // Keep history for graphs
+    station.history.push(station.temp);
+    station.costHistory.push(totalCost);
+    if (station.history.length > 50) station.history.shift();
+    if (station.costHistory.length > 50) station.costHistory.shift();
+  });
+
+  // Reward if ALL stations below REWARD_TEMP_THRESHOLD
+  if (STATIONS.every(s => s.temp < REWARD_TEMP_THRESHOLD)) {
+    budget += REWARD_AMOUNT;
+    alert(`Great job! All stations are below ${REWARD_TEMP_THRESHOLD}°C! You earned a £${REWARD_AMOUNT} efficiency bonus.`);
+  }
+
+  render();
+
+  // Check for game over conditions
+  if (turn >= MAX_TURNS) {
+    gameOver(`Game over! You managed to keep stations cool for ${MAX_TURNS} turns.\nFinal budget: £${budget.toFixed(2)}`);
+  } else if (budget <= 0) {
+    gameOver(`You ran out of budget on turn ${turn}. Game over.`);
+  } else if (STATIONS.some(s => s.temp > MAX_TEMP)) {
+    gameOver(`Station temperature exceeded ${MAX_TEMP}°C on turn ${turn}. Game over.`);
+  }
+}
+
+const graph = document.getElementById('graph');
+const ctx = graph.getContext('2d');
+const costGraph = document.getElementById('costGraph');
+const ctxCost = costGraph.getContext('2d');
+
+function drawGraph() {
+  const width = graph.width;
+  const height = graph.height;
+  ctx.clearRect(0, 0, width, height);
+
+  // Draw axes
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(40, 10);
+  ctx.lineTo(40, height - 30);
+  ctx.lineTo(width - 10, height - 30);
+  ctx.stroke();
+
+  // Draw temperature lines for each station
+  const colors = ['#1e88e5', '#43a047', '#f4511e'];
+  const maxDataPoints = 50;
+  const maxTemp = 40;
+  const minTemp = 20;
+
+  STATIONS.forEach((station, idx) => {
+    ctx.strokeStyle = colors[idx];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+
+    station.history.forEach((temp, i) => {
+      const x = 40 + (i / maxDataPoints) * (width - 50);
+      const y = ((maxTemp - temp) / (maxTemp - minTemp)) * (height - 40) + 10;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+
+    ctx.stroke();
+
+    // Draw station label with color
+    ctx.fillStyle = colors[idx];
+    ctx.font = "14px Arial";
+    ctx.fillText(station.name, width - 120, 25 + idx * 20);
+  });
+
+  // Y-axis labels
+  ctx.fillStyle = '#000';
+  ctx.font = '12px Arial';
+  for (let t = minTemp; t <= maxTemp; t += 5) {
+    let y = ((maxTemp - t) / (maxTemp - minTemp)) * (height - 40) + 10;
+    ctx.fillText(`${t}°C`, 5, y + 4);
+    ctx.beginPath();
+    ctx.strokeStyle = '#ddd';
+    ctx.moveTo(40, y);
+    ctx.lineTo(width - 10, y);
+    ctx.stroke();
+  }
+}
+
+function drawCostGraph() {
+  const width = costGraph.width;
+  const height = costGraph.height;
+  ctxCost.clearRect(0, 0, width, height);
+
+  // Draw axes
+  ctxCost.strokeStyle = '#333';
+  ctxCost.lineWidth = 1;
+  ctxCost.beginPath();
+  ctxCost.moveTo(40, 10);
+  ctxCost.lineTo(40, height - 30);
+  ctxCost.lineTo(width - 10, height - 30);
+  ctxCost.stroke();
+
+  const colors = ['#1e88e5', '#43a047', '#f4511e'];
+  const maxDataPoints = 50;
+  const maxCost = 200;
+  const minCost = 0;
+
+  STATIONS.forEach((station, idx) => {
+    ctxCost.strokeStyle = colors[idx];
+    ctxCost.lineWidth = 2;
+    ctxCost.beginPath();
+
+    station.costHistory.forEach((cost, i) => {
+      const x = 40 + (i / maxDataPoints) * (width - 50);
+      const y = height - 30 - ((cost - minCost) / (maxCost - minCost)) * (height - 40);
+      if (i === 0) ctxCost.moveTo(x, y);
+      else ctxCost.lineTo(x, y);
+    });
+
+    ctxCost.stroke();
+
+    // Draw station label with color
+    ctxCost.fillStyle = colors[idx];
+    ctxCost.font = "14px Arial";
+    ctxCost.fillText(station.name, width - 120, 25 + idx * 20);
+  });
+
+  // Y-axis labels
+  ctxCost.fillStyle = '#000';
+  ctxCost.font = '12px Arial';
+  for (let c = minCost; c <= maxCost; c += 50) {
+    let y = height - 30 - ((c - minCost) / (maxCost - minCost)) * (height - 40);
+    ctxCost.fillText(`£${c}`, 5, y + 4);
+    ctxCost.beginPath();
+    ctxCost.strokeStyle = '#ddd';
+    ctxCost.moveTo(40, y);
+    ctxCost.lineTo(width - 10, y);
+    ctxCost.stroke();
+  }
+}
+
+// Initial render
+render();
+</script>
+
+</body>
+</html>
+
